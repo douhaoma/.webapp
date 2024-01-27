@@ -1,0 +1,39 @@
+name: Packer CI
+
+on:
+  pull_request:
+
+jobs:
+  Packer-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          packer_version: 1.9.4 
+        
+      - name: mkdir
+        run: | 
+          mkdir -p ${{ github.workspace }}/myapp
+        
+      - name: Run Init
+        run: "packer init packer/"
+        
+      - name: Packer Format
+        run: |
+          packer fmt -check packer/
+        continue-on-error: false # 如果命令失败，则该步骤会失败，从而导致整个工作流失败
+        
+      - name: Packer Validate
+        run: |
+          packer validate packer/
+        env:
+          PKR_VAR_app_binary_path: ${{ github.workspace }}/myapp
+          PKR_VAR_users_path: ${{ github.workspace }}/users.csv
+        continue-on-error: false # 如果命令失败，则该步骤会失败，从而导致整个工作流失败
+
+      - name: Remove placeholder
+        run: rm -rf ${{ github.workspace }}/myapp

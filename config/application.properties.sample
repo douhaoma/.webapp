@@ -1,0 +1,5 @@
+[mysql]
+hostname="localhost:3306"
+username="root"
+password="password"
+database="csye6225"

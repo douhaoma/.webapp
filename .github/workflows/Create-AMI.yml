@@ -1,0 +1,87 @@
+name: Create-AMI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  Create-AMI:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: start mysql
+        run: sudo /etc/init.d/mysql start
+
+      - name: Create MySQL Database
+        env:
+          MYSQL_PASS: ${{ secrets.MYSQL_PASS }}
+        run: |
+          mysql -h localhost -u root -proot -e "CREATE DATABASE csye6225;"
+          mysql -h localhost -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_PASS';
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache-dependency-path: subdir/go.sum
+
+      - name: Install dependencies
+        run: go mod tidy && go mod download
+
+      - name: Build
+        run: go build -v -o myapp main.go
+
+      - name: Run tests
+        run: |
+          go test -v ./...
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          packer-version: '1.9.4'
+
+      - name: Run Packer Init
+        run: packer init packer/
+
+      - name: Run Packer Build
+        env:
+          PKR_VAR_app_binary_path: ${{ github.workspace }}/myapp
+          PKR_VAR_users_path: ${{ github.workspace }}/users.csv
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: packer build packer/ami.us-east-1.pkr.hcl
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_DEMO_ACCESS_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_DEMO_ACCESS_KEY }}
+          # aws-region: us-east-1
+
+      - name: Retrieve the latest shared AMI ID
+        id: get-latest-ami
+        run: |
+          LATEST_AMI_ID=$(aws ec2 describe-images \
+            --executable-users ${{ secrets.DEMO_ACCOUNT }} \
+            --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+            --output text \
+            --debug)
+          echo "LATEST_AMI_ID=$LATEST_AMI_ID"
+          echo "LATEST_AMI_ID=$LATEST_AMI_ID" >> $GITHUB_ENV
+
+      - name: Create new launch template
+        run: |
+          aws ec2 create-launch-template \
+            --launch-template-name demo-template-new \
+            --version-description "New version with updated AMI" \
+            --launch-template-data '{"ImageId": "'$LATEST_AMI_ID'"}'
+
+      - name: Refresh instances
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name csye6225-asg \
+            --strategy Rolling
